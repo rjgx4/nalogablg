@@ -1,0 +1,12 @@
+{
+  "name": "blginc",
+  "private": true,
+  "version": "0.0.0",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:frontend": "npm --workspace frontend run dev",
+    "dev:restate": "npm --workspace restate-service run dev"
+  }
+}
