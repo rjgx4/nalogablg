@@ -7,20 +7,36 @@ export type Stage =
 
 export type Prompt = { stage: Stage; prompt: string };
 
-const SYSTEM_PROMPT = `You analyze a website's content and generate 5 prompts that potential customers might ask AI assistants (ChatGPT, Gemini) when looking for solutions in this business's domain.
+export type Brand = { name: string; description: string };
 
-Generate exactly one prompt for each of these buying-journey stages:
+export type PromptGenResult = { brand: Brand; prompts: Prompt[] };
+
+const SYSTEM_PROMPT = `You analyze a website's content and produce two things:
+
+1. brand: identify the brand at this site. Provide a short canonical name (e.g., "Stripe", "HubSpot") and a one-line description of what they do.
+
+2. prompts: generate exactly 5 prompts that potential customers might ask AI assistants (ChatGPT, Gemini) when looking for solutions in this business's domain.
+
+For prompts, generate exactly one for each buying-journey stage:
 - awareness: broad, problem-space exploration ("what tools help with X")
 - consideration: comparing options/categories ("best X for Y")
 - decision: comparing specific named products ("X vs Y")
 - problem-focused: a specific pain point ("how to do X effectively")
 - solution-focused: a specific feature/integration need ("X with Y feature")
 
-Make the prompts realistic, diverse, and the kind of thing a real prospective customer would type. Do not mention the analyzed website's brand name.`;
+Make the prompts realistic, diverse, and the kind of thing a real prospective customer would type. Do not mention the analyzed brand's name in the prompts.`;
 
 const RESPONSE_SCHEMA = {
   type: "object",
   properties: {
+    brand: {
+      type: "object",
+      properties: {
+        name: { type: "string" },
+        description: { type: "string" }
+      },
+      required: ["name", "description"]
+    },
     prompts: {
       type: "array",
       items: {
@@ -38,14 +54,14 @@ const RESPONSE_SCHEMA = {
       maxItems: 5
     }
   },
-  required: ["prompts"]
+  required: ["brand", "prompts"]
 };
 
 type GeminiResponse = {
   candidates?: { content?: { parts?: { text?: string }[] } }[];
 };
 
-export async function generatePrompts(siteContent: string): Promise<Prompt[]> {
+export async function generatePrompts(siteContent: string): Promise<PromptGenResult> {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error("GEMINI_API_KEY must be set");
 
@@ -76,6 +92,5 @@ export async function generatePrompts(siteContent: string): Promise<Prompt[]> {
   const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
   if (!text) throw new Error("Gemini returned no content");
 
-  const parsed = JSON.parse(text) as { prompts: Prompt[] };
-  return parsed.prompts;
+  return JSON.parse(text) as PromptGenResult;
 }
