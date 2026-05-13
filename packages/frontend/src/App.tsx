@@ -14,13 +14,20 @@ type Brand = { name: string; description: string };
 type Citation = { url: string; title: string };
 type BrandMention = { name: string; mentions: number };
 
-type PromptResult = Prompt & {
+type LlmName = "gemini" | "openai";
+
+type LlmResponse = {
   answer: string;
   citations: Citation[];
   searchQueries: string[];
   brands: BrandMention[];
   targetMentioned: boolean;
   targetMentions: number;
+};
+
+type PromptResult = Prompt & {
+  responses: Partial<Record<LlmName, LlmResponse>>;
+  combined: LlmResponse;
 };
 
 type Aggregate = {
@@ -95,15 +102,20 @@ function isTargetBrand(name: string, target: string): boolean {
 }
 
 function promptVisibility(r: PromptResult): number {
-  const total = r.brands.reduce((s, b) => s + b.mentions, 0);
+  const total = r.combined.brands.reduce((s, b) => s + b.mentions, 0);
   if (total === 0) return 0;
-  return (r.targetMentions / total) * 100;
+  return (r.combined.targetMentions / total) * 100;
 }
 
 function mostVisibleBrand(r: PromptResult): string | null {
-  if (r.brands.length === 0) return null;
-  return [...r.brands].sort((a, b) => b.mentions - a.mentions)[0].name;
+  if (r.combined.brands.length === 0) return null;
+  return [...r.combined.brands].sort((a, b) => b.mentions - a.mentions)[0].name;
 }
+
+const LLM_LABELS: Record<LlmName, string> = {
+  gemini: "Gemini",
+  openai: "OpenAI"
+};
 
 function BrandAvatar({
   name,
@@ -128,9 +140,16 @@ function BrandAvatar({
   );
 }
 
-function LlmIcon() {
+function LlmIcon({ llm }: { llm: LlmName }) {
+  const cls =
+    llm === "gemini"
+      ? "bg-gradient-to-br from-blue-400 via-purple-500 to-pink-400"
+      : "bg-gray-900";
   return (
-    <div className="w-6 h-6 rounded-full bg-gradient-to-br from-blue-400 via-purple-500 to-pink-400 flex items-center justify-center text-white shrink-0">
+    <div
+      title={LLM_LABELS[llm]}
+      className={`w-6 h-6 rounded-full ${cls} flex items-center justify-center text-white shrink-0`}
+    >
       <Sparkles className="w-3 h-3" />
     </div>
   );
@@ -195,7 +214,17 @@ function PromptsTable({
             >
               <div className="text-sm text-gray-900 pr-4">{r.prompt}</div>
               <div className="text-sm font-medium text-gray-900">{v.toFixed(0)}%</div>
-              <div>{r.answer ? <LlmIcon /> : <span className="text-gray-300">—</span>}</div>
+              <div className="flex items-center gap-1">
+                {(["gemini", "openai"] as LlmName[]).map((llm) =>
+                  r.responses[llm]?.targetMentioned ? (
+                    <LlmIcon key={llm} llm={llm} />
+                  ) : null
+                )}
+                {!r.responses.gemini?.targetMentioned &&
+                  !r.responses.openai?.targetMentioned && (
+                    <span className="text-gray-300">—</span>
+                  )}
+              </div>
               <div className="flex items-center gap-2 pr-2">
                 {mv ? (
                   <>
@@ -220,51 +249,68 @@ function PromptsTable({
               </div>
             </button>
             {open && (
-              <div className="px-5 pb-5 pt-3 bg-gray-50 border-t border-gray-100 space-y-3">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <div>
-                    <div className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-1">
-                      Brands mentioned
+              <div className="px-5 pb-5 pt-3 bg-gray-50 border-t border-gray-100 space-y-4">
+                {(["gemini", "openai"] as LlmName[]).map((llm) => {
+                  const resp = r.responses[llm];
+                  if (!resp) return null;
+                  return (
+                    <div key={llm} className="space-y-2">
+                      <div className="flex items-center gap-2">
+                        <LlmIcon llm={llm} />
+                        <span className="text-sm font-medium text-gray-700">
+                          {LLM_LABELS[llm]}
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <div>
+                          <div className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-1">
+                            Brands mentioned
+                          </div>
+                          {resp.brands.length === 0 ? (
+                            <div className="text-sm text-gray-500">none</div>
+                          ) : (
+                            <ul className="text-sm space-y-1">
+                              {resp.brands.map((b) => (
+                                <li
+                                  key={b.name}
+                                  className="flex items-center gap-2"
+                                >
+                                  <BrandAvatar name={b.name} target={target} />
+                                  <span>
+                                    {b.name} ({b.mentions})
+                                  </span>
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
+                        <div>
+                          <div className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-1">
+                            Citations
+                          </div>
+                          {resp.citations.length === 0 ? (
+                            <div className="text-sm text-gray-500">none</div>
+                          ) : (
+                            <ul className="text-sm space-y-1">
+                              {resp.citations.map((c, j) => (
+                                <li key={j} className="truncate">
+                                  <a
+                                    href={c.url}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="text-blue-600 hover:underline"
+                                  >
+                                    {c.title}
+                                  </a>
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
+                      </div>
                     </div>
-                    {r.brands.length === 0 ? (
-                      <div className="text-sm text-gray-500">none</div>
-                    ) : (
-                      <ul className="text-sm space-y-1">
-                        {r.brands.map((b) => (
-                          <li key={b.name} className="flex items-center gap-2">
-                            <BrandAvatar name={b.name} target={target} />
-                            <span>
-                              {b.name} ({b.mentions})
-                            </span>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
-                  <div>
-                    <div className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-1">
-                      Citations
-                    </div>
-                    {r.citations.length === 0 ? (
-                      <div className="text-sm text-gray-500">none</div>
-                    ) : (
-                      <ul className="text-sm space-y-1">
-                        {r.citations.map((c, j) => (
-                          <li key={j} className="truncate">
-                            <a
-                              href={c.url}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="text-blue-600 hover:underline"
-                            >
-                              {c.title}
-                            </a>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
-                </div>
+                  );
+                })}
               </div>
             )}
           </div>

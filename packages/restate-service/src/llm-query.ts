@@ -25,6 +25,82 @@ function endpoint(apiKey: string): string {
 }
 
 let firstGroundedLogged = false;
+let firstOpenAILogged = false;
+
+export type LlmName = "gemini" | "openai";
+
+const OPENAI_MODEL = "gpt-5.4-nano";
+
+type OpenAIAnnotation = {
+  type?: string;
+  url?: string;
+  title?: string;
+};
+
+type OpenAIContentPart = {
+  type?: string;
+  text?: string;
+  annotations?: OpenAIAnnotation[];
+};
+
+type OpenAIOutputItem = {
+  type?: string;
+  content?: OpenAIContentPart[];
+};
+
+type OpenAIResponse = {
+  output_text?: string;
+  output?: OpenAIOutputItem[];
+};
+
+export async function queryOpenAIWebSearch(prompt: string): Promise<GroundedResponse> {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) throw new Error("OPENAI_API_KEY must be set");
+
+  const res = await fetch("https://api.openai.com/v1/responses", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      model: OPENAI_MODEL,
+      input: prompt,
+      tools: [{ type: "web_search" }]
+    })
+  });
+  const body = await res.text();
+  if (!res.ok) throw new Error(`OpenAI call failed: ${res.status} ${body}`);
+
+  if (!firstOpenAILogged) {
+    console.log("[llm-query] first OpenAI response (truncated):", body.slice(0, 2000));
+    firstOpenAILogged = true;
+  }
+
+  const data = JSON.parse(body) as OpenAIResponse;
+
+  let answer = data.output_text ?? "";
+  if (!answer) {
+    answer = (data.output ?? [])
+      .filter((o) => o.type === "message")
+      .flatMap((o) => o.content ?? [])
+      .filter((c) => c.type === "output_text")
+      .map((c) => c.text ?? "")
+      .join("")
+      .trim();
+  }
+
+  const citations: Citation[] = (data.output ?? [])
+    .filter((o) => o.type === "message")
+    .flatMap((o) => o.content ?? [])
+    .filter((c) => c.type === "output_text")
+    .flatMap((c) => c.annotations ?? [])
+    .filter((a) => a.type === "url_citation" && !!a.url)
+    .map((a) => ({ url: a.url!, title: a.title ?? a.url! }));
+
+  return { answer, citations, searchQueries: [] };
+}
+
 
 type GroundingChunk = { web?: { uri?: string; title?: string } };
 type Candidate = {
