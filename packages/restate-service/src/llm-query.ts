@@ -100,23 +100,42 @@ type ExtractResponse = {
 
 export async function extractBrands(
   answer: string,
-  targetBrand: string
+  targetBrand: string,
+  citations: Citation[]
 ): Promise<BrandExtraction> {
   const apiKey = getApiKey();
-  const systemPrompt = `You extract brand/company/product names from an answer text.
+  const systemPrompt = `You extract brand/company/product names from a Gemini answer and its source citations.
 
-Identify all distinct brands, companies, products, or services mentioned. For each, count how many times it appears across the text (case-insensitive; treat variations like "Stripe Inc." and "stripe" as the same "Stripe"). Use the canonical brand name in your output.
+You have two signals:
+1. Direct mentions in the answer text — count each occurrence.
+2. Citation source domains that are brand-owned sites — count each such citation as one mention of that brand. Examples: "trybello.com" → "Bello", "color-wow.com" → "Color Wow", "theradome.com" → "Theradome".
 
-You will be given a target brand: "${targetBrand}". Set targetMentioned=true if the target brand is mentioned in any form (variations, differing capitalization, with corporate suffixes); set targetMentions to its occurrence count. The target brand should also appear in the brands array if mentioned.
+Do NOT count citations from authoritative or general-purpose domains as brand mentions. Skip: medical/health authorities (mayoclinic.org, clevelandclinic.org, nih.gov, aafp.org, webmd.com), encyclopedic sites (wikipedia.org), social/video platforms (youtube.com, reddit.com, tiktok.com, instagram.com), search/news aggregators, app stores, and generic news sites. Apply judgment for borderline cases — only credit citations from sites that clearly represent a specific product, company, or commercial brand.
 
-Only list actual brand/company/product names — not generic categories, features, or technologies. If no brands are mentioned, return an empty brands array, targetMentioned=false, targetMentions=0.`;
+Output rules:
+- One entry per distinct brand, using its canonical name (e.g., "Stripe" not "stripe inc.").
+- "mentions" = (count of text mentions) + (count of citations from that brand's domain).
+- The target brand is "${targetBrand}". Set targetMentioned=true if it appears via either signal; targetMentions = total combined count.
+- The target brand should appear in the brands array if mentioned, with the combined count.
+- If no brands are found through either signal, return an empty brands array, targetMentioned=false, targetMentions=0.`;
+
+  const citationLines =
+    citations.length === 0
+      ? "(no citations)"
+      : citations.map((c) => `- ${c.url} (${c.title})`).join("\n");
+
+  const userInput = `Answer text:
+${answer}
+
+Source citations:
+${citationLines}`;
 
   const res = await fetch(endpoint(apiKey), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       systemInstruction: { parts: [{ text: systemPrompt }] },
-      contents: [{ role: "user", parts: [{ text: answer }] }],
+      contents: [{ role: "user", parts: [{ text: userInput }] }],
       generationConfig: {
         responseMimeType: "application/json",
         responseSchema: EXTRACT_SCHEMA

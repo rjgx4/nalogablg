@@ -43,7 +43,9 @@ async function runAnalysis(
   );
   const extracted = await restate.RestatePromise.all(
     grounded.map((g, i) =>
-      ctx.run(`gemini-extract-${i}`, () => extractBrands(g.answer, brand.name))
+      ctx.run(`gemini-extract-${i}`, () =>
+        extractBrands(g.answer, brand.name, g.citations)
+      )
     )
   );
   const promptResults: PromptResult[] = prompts.map((p, i) => ({

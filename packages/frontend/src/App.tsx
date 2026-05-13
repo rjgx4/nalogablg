@@ -1,4 +1,6 @@
 import { useState, FormEvent } from "react";
+import { ChevronRight, ChevronDown, Info, Sparkles, RefreshCw } from "lucide-react";
+import { PieChart, Pie, ResponsiveContainer } from "recharts";
 
 type Stage =
   | "awareness"
@@ -36,6 +38,23 @@ type AnalyzeResponse = {
   cached: boolean;
 };
 
+const PALETTE = ["#F97316", "#6366F1", "#A5B4FC", "#8B5CF6", "#C7D2FE", "#FB923C", "#818CF8"];
+const TARGET_COLOR = "#F97316";
+
+function hashCode(s: string): number {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) {
+    h = (h << 5) - h + s.charCodeAt(i);
+    h |= 0;
+  }
+  return Math.abs(h);
+}
+
+function colorFor(name: string, isTarget = false): string {
+  if (isTarget) return TARGET_COLOR;
+  return PALETTE[hashCode(name.toLowerCase()) % PALETTE.length];
+}
+
 function normalizeUrl(input: string): string {
   try {
     const trimmed = input.trim();
@@ -71,277 +90,257 @@ async function callAnalyzer(
   return (await res.json()) as AnalyzeResponse;
 }
 
-const cardStyle: React.CSSProperties = {
-  border: "1px solid #e5e5e5",
-  borderRadius: 8,
-  padding: "1rem",
-  marginTop: "1rem",
-  background: "#fafafa"
-};
+function isTargetBrand(name: string, target: string): boolean {
+  return name.trim().toLowerCase() === target.trim().toLowerCase();
+}
 
-function BrandBanner({
-  brand,
-  url,
-  cached,
-  loading,
-  onRefresh
+function promptVisibility(r: PromptResult): number {
+  const total = r.brands.reduce((s, b) => s + b.mentions, 0);
+  if (total === 0) return 0;
+  return (r.targetMentions / total) * 100;
+}
+
+function mostVisibleBrand(r: PromptResult): string | null {
+  if (r.brands.length === 0) return null;
+  return [...r.brands].sort((a, b) => b.mentions - a.mentions)[0].name;
+}
+
+function BrandAvatar({
+  name,
+  target,
+  size = "sm"
 }: {
+  name: string;
+  target?: string;
+  size?: "sm" | "md";
+}) {
+  const initial = name.trim().charAt(0).toUpperCase() || "?";
+  const isTarget = target ? isTargetBrand(name, target) : false;
+  const color = colorFor(name, isTarget);
+  const dim = size === "md" ? "w-7 h-7 text-sm" : "w-6 h-6 text-xs";
+  return (
+    <div
+      className={`${dim} rounded-full flex items-center justify-center text-white font-semibold shrink-0`}
+      style={{ backgroundColor: color }}
+    >
+      {initial}
+    </div>
+  );
+}
+
+function LlmIcon() {
+  return (
+    <div className="w-6 h-6 rounded-full bg-gradient-to-br from-blue-400 via-purple-500 to-pink-400 flex items-center justify-center text-white shrink-0">
+      <Sparkles className="w-3 h-3" />
+    </div>
+  );
+}
+
+function VisibilityScoreCard({
+  score,
+  brand
+}: {
+  score: number;
   brand: Brand;
-  url: string;
-  cached: boolean;
-  loading: boolean;
-  onRefresh: () => void;
 }) {
   return (
-    <section style={cardStyle}>
-      <h2 style={{ margin: 0 }}>{brand.name}</h2>
-      <p style={{ margin: "0.25rem 0 0.5rem", color: "#444" }}>{brand.description}</p>
-      <p style={{ margin: 0, fontSize: "0.85rem", color: "#666" }}>
-        {url} · {cached ? "cached result" : "fresh analysis"}{" "}
-        <button
-          type="button"
-          onClick={onRefresh}
-          disabled={loading}
-          style={{ marginLeft: "0.5rem" }}
-        >
-          {loading ? "Re-analyzing…" : "Re-analyze"}
-        </button>
-      </p>
-    </section>
+    <div className="border border-gray-200 rounded-xl bg-white p-5 shadow-sm">
+      <div className="flex items-center gap-2 mb-2">
+        <div className="w-7 h-7 rounded-full bg-gradient-to-br from-blue-400 via-purple-500 to-pink-400 flex items-center justify-center text-white">
+          <Sparkles className="w-3.5 h-3.5" />
+        </div>
+        <span className="text-xs font-medium text-gray-500 uppercase tracking-wider">
+          Visibility Score
+        </span>
+        <Info className="w-4 h-4 text-gray-300" />
+      </div>
+      <div className="flex items-baseline gap-3">
+        <div className="text-5xl font-bold text-gray-900">{score.toFixed(0)}%</div>
+        <div className="text-sm text-gray-500">{brand.name}</div>
+      </div>
+    </div>
   );
 }
 
-function VisibilityCard({ v }: { v: Aggregate["visibility"] }) {
-  return (
-    <section style={cardStyle}>
-      <h3 style={{ marginTop: 0 }}>Visibility score</h3>
-      <p style={{ fontSize: "2.5rem", margin: 0, fontWeight: 600 }}>
-        {v.score.toFixed(1)}%
-      </p>
-      <p style={{ margin: "0.25rem 0 0", color: "#666", fontSize: "0.9rem" }}>
-        {v.targetMentions} mention{v.targetMentions === 1 ? "" : "s"} of your brand out of{" "}
-        {v.totalMentions} total brand mention{v.totalMentions === 1 ? "" : "s"} across all
-        prompts (share of voice).
-      </p>
-    </section>
-  );
-}
-
-function MarketShareTable({
-  items,
+function PromptsTable({
+  results,
   target
 }: {
-  items: Aggregate["marketShare"];
+  results: PromptResult[];
   target: string;
 }) {
-  if (items.length === 0) {
-    return (
-      <section style={cardStyle}>
-        <h3 style={{ marginTop: 0 }}>Market share</h3>
-        <p style={{ color: "#666" }}>No brands mentioned in any answers.</p>
-      </section>
-    );
-  }
-  const targetKey = target.trim().toLowerCase();
-  return (
-    <section style={cardStyle}>
-      <h3 style={{ marginTop: 0 }}>Market share</h3>
-      <table style={{ width: "100%", borderCollapse: "collapse" }}>
-        <thead>
-          <tr style={{ textAlign: "left", borderBottom: "1px solid #ddd" }}>
-            <th style={{ padding: "0.4rem 0.25rem" }}>Brand</th>
-            <th style={{ padding: "0.4rem 0.25rem", textAlign: "right" }}>Mentions</th>
-            <th style={{ padding: "0.4rem 0.25rem", textAlign: "right" }}>Share</th>
-          </tr>
-        </thead>
-        <tbody>
-          {items.map((b) => {
-            const isTarget = b.name.trim().toLowerCase() === targetKey;
-            return (
-              <tr
-                key={b.name}
-                style={{
-                  borderBottom: "1px solid #eee",
-                  fontWeight: isTarget ? 600 : 400,
-                  background: isTarget ? "#fff8e1" : undefined
-                }}
-              >
-                <td style={{ padding: "0.4rem 0.25rem" }}>
-                  {b.name}
-                  {isTarget && (
-                    <span style={{ color: "#888", fontWeight: 400 }}> (you)</span>
-                  )}
-                </td>
-                <td style={{ padding: "0.4rem 0.25rem", textAlign: "right" }}>
-                  {b.mentions}
-                </td>
-                <td style={{ padding: "0.4rem 0.25rem", textAlign: "right" }}>
-                  {b.percentage.toFixed(1)}%
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </section>
-  );
-}
-
-function CitationDomains({ items }: { items: Aggregate["citationDomains"] }) {
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  const toggle = (domain: string) => {
-    const next = new Set(expanded);
-    if (next.has(domain)) next.delete(domain);
-    else next.add(domain);
-    setExpanded(next);
-  };
-  if (items.length === 0) {
-    return (
-      <section style={cardStyle}>
-        <h3 style={{ marginTop: 0 }}>Citation sources</h3>
-        <p style={{ color: "#666" }}>Gemini didn't cite any sources for these prompts.</p>
-      </section>
-    );
-  }
-  return (
-    <section style={cardStyle}>
-      <h3 style={{ marginTop: 0 }}>Citation sources</h3>
-      <p style={{ margin: "0 0 0.5rem", color: "#666", fontSize: "0.9rem" }}>
-        Domains Gemini cited across all prompts. Click to expand URLs.
-      </p>
-      <ul style={{ paddingLeft: "1.25rem", margin: 0 }}>
-        {items.map((d) => (
-          <li key={d.domain} style={{ marginBottom: "0.25rem" }}>
-            <button
-              type="button"
-              onClick={() => toggle(d.domain)}
-              style={{
-                background: "none",
-                border: "none",
-                padding: 0,
-                cursor: "pointer",
-                color: "#0366d6",
-                textDecoration: "underline"
-              }}
-            >
-              {d.domain} ({d.count})
-            </button>
-            {expanded.has(d.domain) && (
-              <ul style={{ paddingLeft: "1.25rem", margin: "0.25rem 0" }}>
-                {d.urls.map((u) => (
-                  <li key={u} style={{ wordBreak: "break-all", fontSize: "0.85rem" }}>
-                    <a href={u} target="_blank" rel="noreferrer">
-                      {u}
-                    </a>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </li>
-        ))}
-      </ul>
-    </section>
-  );
-}
-
-function PromptDrillDown({ results }: { results: PromptResult[] }) {
   const [openIdx, setOpenIdx] = useState<number | null>(null);
   return (
-    <section style={cardStyle}>
-      <h3 style={{ marginTop: 0 }}>Per-prompt detail</h3>
-      {results.map((r, i) => (
-        <div
-          key={i}
-          style={{
-            borderBottom: i === results.length - 1 ? "none" : "1px solid #eee",
-            padding: "0.5rem 0"
-          }}
-        >
-          <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+    <div className="border border-gray-200 rounded-xl bg-white overflow-hidden shadow-sm">
+      <div className="grid grid-cols-[1fr_110px_140px_200px_36px] px-5 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider bg-gray-50 border-b border-gray-200">
+        <div>Prompts</div>
+        <div>Visibility</div>
+        <div>Mentioned In</div>
+        <div>Most Visible</div>
+        <div></div>
+      </div>
+      {results.map((r, i) => {
+        const v = promptVisibility(r);
+        const mv = mostVisibleBrand(r);
+        const open = openIdx === i;
+        return (
+          <div
+            key={i}
+            className={i === results.length - 1 ? "" : "border-b border-gray-100"}
+          >
             <button
               type="button"
-              onClick={() => setOpenIdx(openIdx === i ? null : i)}
-              style={{
-                background: "none",
-                border: "none",
-                padding: 0,
-                cursor: "pointer",
-                fontSize: "1rem"
-              }}
-              aria-label="toggle"
+              onClick={() => setOpenIdx(open ? null : i)}
+              className="w-full grid grid-cols-[1fr_110px_140px_200px_36px] px-5 py-4 items-center text-left hover:bg-gray-50 transition-colors"
             >
-              {openIdx === i ? "▾" : "▸"}
-            </button>
-            <span
-              style={{
-                fontSize: "0.75rem",
-                color: "#666",
-                textTransform: "uppercase",
-                letterSpacing: "0.05em",
-                minWidth: 130
-              }}
-            >
-              {r.stage}
-            </span>
-            <span style={{ flex: 1 }}>{r.prompt}</span>
-            <span
-              style={{
-                fontSize: "0.8rem",
-                color: r.targetMentioned ? "#1a7f37" : "#888"
-              }}
-            >
-              {r.targetMentioned ? "✓ you" : "✗ not cited"}
-            </span>
-          </div>
-          {openIdx === i && (
-            <div style={{ padding: "0.5rem 0 0 1.5rem", fontSize: "0.9rem" }}>
-              <details open>
-                <summary style={{ cursor: "pointer", color: "#666" }}>Answer</summary>
-                <pre
-                  style={{
-                    whiteSpace: "pre-wrap",
-                    background: "#fff",
-                    padding: "0.5rem",
-                    border: "1px solid #eee",
-                    borderRadius: 4,
-                    margin: "0.25rem 0"
-                  }}
-                >
-                  {r.answer || "(empty)"}
-                </pre>
-              </details>
-              <div style={{ marginTop: "0.5rem" }}>
-                <strong>Brands mentioned:</strong>{" "}
-                {r.brands.length === 0
-                  ? "none"
-                  : r.brands.map((b) => `${b.name} (${b.mentions})`).join(", ")}
-              </div>
-              <div style={{ marginTop: "0.25rem" }}>
-                <strong>Citations:</strong>
-                {r.citations.length === 0 ? (
-                  " none"
+              <div className="text-sm text-gray-900 pr-4">{r.prompt}</div>
+              <div className="text-sm font-medium text-gray-900">{v.toFixed(0)}%</div>
+              <div>{r.answer ? <LlmIcon /> : <span className="text-gray-300">—</span>}</div>
+              <div className="flex items-center gap-2 pr-2">
+                {mv ? (
+                  <>
+                    <BrandAvatar name={mv} target={target} />
+                    <span className="text-sm truncate">
+                      {mv}
+                      {isTargetBrand(mv, target) && (
+                        <span className="text-gray-400"> (you)</span>
+                      )}
+                    </span>
+                  </>
                 ) : (
-                  <ul style={{ margin: "0.25rem 0", paddingLeft: "1.25rem" }}>
-                    {r.citations.map((c, j) => (
-                      <li key={j} style={{ wordBreak: "break-all" }}>
-                        <a href={c.url} target="_blank" rel="noreferrer">
-                          {c.title}
-                        </a>
-                      </li>
-                    ))}
-                  </ul>
+                  <span className="text-sm text-gray-400">—</span>
                 )}
               </div>
-              {r.searchQueries.length > 0 && (
-                <div style={{ marginTop: "0.25rem", color: "#666", fontSize: "0.8rem" }}>
-                  Gemini searched: {r.searchQueries.join(", ")}
+              <div className="flex justify-end text-gray-400">
+                {open ? (
+                  <ChevronDown className="w-4 h-4" />
+                ) : (
+                  <ChevronRight className="w-4 h-4" />
+                )}
+              </div>
+            </button>
+            {open && (
+              <div className="px-5 pb-5 pt-3 bg-gray-50 border-t border-gray-100 space-y-3">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div>
+                    <div className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-1">
+                      Brands mentioned
+                    </div>
+                    {r.brands.length === 0 ? (
+                      <div className="text-sm text-gray-500">none</div>
+                    ) : (
+                      <ul className="text-sm space-y-1">
+                        {r.brands.map((b) => (
+                          <li key={b.name} className="flex items-center gap-2">
+                            <BrandAvatar name={b.name} target={target} />
+                            <span>
+                              {b.name} ({b.mentions})
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                  <div>
+                    <div className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-1">
+                      Citations
+                    </div>
+                    {r.citations.length === 0 ? (
+                      <div className="text-sm text-gray-500">none</div>
+                    ) : (
+                      <ul className="text-sm space-y-1">
+                        {r.citations.map((c, j) => (
+                          <li key={j} className="truncate">
+                            <a
+                              href={c.url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-blue-600 hover:underline"
+                            >
+                              {c.title}
+                            </a>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
                 </div>
-              )}
-            </div>
-          )}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function BrandsMentionedCard({
+  marketShare,
+  target
+}: {
+  marketShare: Aggregate["marketShare"];
+  target: string;
+}) {
+  const top = marketShare.slice(0, 5);
+  const rest = marketShare.slice(5);
+  if (top.length === 0) {
+    return (
+      <div className="border border-gray-200 rounded-xl bg-white p-5 shadow-sm">
+        <h3 className="text-base font-semibold text-gray-900 mb-3">Brands Mentioned</h3>
+        <p className="text-sm text-gray-500">No brand mentions yet.</p>
+      </div>
+    );
+  }
+  const data: { name: string; value: number; fill: string }[] = top.map((b) => ({
+    name: b.name,
+    value: b.percentage,
+    fill: colorFor(b.name, isTargetBrand(b.name, target))
+  }));
+  if (rest.length > 0) {
+    const otherPct = rest.reduce((s, b) => s + b.percentage, 0);
+    data.push({
+      name: `Other (${rest.length})`,
+      value: otherPct,
+      fill: "#E5E7EB"
+    });
+  }
+  return (
+    <div className="border border-gray-200 rounded-xl bg-white p-5 shadow-sm">
+      <h3 className="text-base font-semibold text-gray-900 mb-4">Brands Mentioned</h3>
+      <div className="flex items-center gap-6">
+        <div className="w-44 h-44 shrink-0">
+          <ResponsiveContainer>
+            <PieChart>
+              <Pie
+                data={data}
+                dataKey="value"
+                innerRadius={48}
+                outerRadius={80}
+                stroke="none"
+                paddingAngle={1}
+              />
+            </PieChart>
+          </ResponsiveContainer>
         </div>
-      ))}
-    </section>
+        <div className="space-y-2 text-sm flex-1 min-w-0">
+          {data.map((b) => (
+            <div key={b.name} className="flex items-center gap-2">
+              <div
+                className="w-2.5 h-2.5 rounded-full shrink-0"
+                style={{ backgroundColor: b.fill }}
+              />
+              <span className="truncate">
+                {b.name}{" "}
+                <span className="text-gray-500">({b.value.toFixed(0)}%)</span>
+                {isTargetBrand(b.name, target) && (
+                  <span className="text-gray-400"> (you)</span>
+                )}
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -366,52 +365,72 @@ export default function App() {
   }
 
   return (
-    <main
-      style={{
-        fontFamily: "system-ui, sans-serif",
-        maxWidth: 880,
-        margin: "2rem auto",
-        padding: "0 1rem"
-      }}
-    >
-      <h1>blginc</h1>
-      <p>Analyze how your website appears in Gemini (ChatGPT support coming).</p>
+    <div className="min-h-screen bg-gray-50">
+      <main className="max-w-6xl mx-auto px-4 py-8 space-y-5">
+        <header className="space-y-1">
+          <h1 className="text-2xl font-bold text-gray-900">blginc</h1>
+          <p className="text-sm text-gray-500">
+            See how your brand shows up in AI assistants' answers.
+          </p>
+        </header>
 
-      <form onSubmit={(e) => run("analyze", e)}>
-        <input
-          type="text"
-          required
-          value={url}
-          onChange={(e) => setUrl(e.target.value)}
-          placeholder="example.com or https://example.com"
-          style={{ width: "100%", padding: "0.5rem", fontSize: "1rem", boxSizing: "border-box" }}
-        />
-        <button
-          type="submit"
-          disabled={loading || !url}
-          style={{ marginTop: "0.5rem", padding: "0.5rem 1rem" }}
-        >
-          {loading ? "Working…" : "Analyze"}
-        </button>
-      </form>
-
-      {error && <p style={{ color: "crimson" }}>{error}</p>}
-
-      {result && (
-        <>
-          <BrandBanner
-            brand={result.brand}
-            url={result.url}
-            cached={result.cached}
-            loading={loading}
-            onRefresh={() => run("refresh")}
+        <form onSubmit={(e) => run("analyze", e)} className="flex gap-2">
+          <input
+            type="text"
+            required
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            placeholder="example.com or https://example.com"
+            className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
           />
-          <VisibilityCard v={result.aggregate.visibility} />
-          <MarketShareTable items={result.aggregate.marketShare} target={result.brand.name} />
-          <CitationDomains items={result.aggregate.citationDomains} />
-          <PromptDrillDown results={result.promptResults} />
-        </>
-      )}
-    </main>
+          <button
+            type="submit"
+            disabled={loading || !url}
+            className="px-4 py-2 bg-gray-900 text-white text-sm font-medium rounded-lg hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {loading ? "Working…" : "Analyze"}
+          </button>
+        </form>
+
+        {error && (
+          <div className="border border-red-200 bg-red-50 text-red-700 rounded-lg px-4 py-3 text-sm">
+            {error}
+          </div>
+        )}
+
+        {result && (
+          <>
+            <div className="flex items-center justify-between text-sm text-gray-500">
+              <div>
+                <span className="font-medium text-gray-700">{result.brand.name}</span>{" "}
+                · {result.url} · {result.cached ? "cached" : "fresh"}
+              </div>
+              <button
+                type="button"
+                onClick={() => run("refresh")}
+                disabled={loading}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-white disabled:opacity-50"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
+                Re-analyze
+              </button>
+            </div>
+
+            <VisibilityScoreCard
+              score={result.aggregate.visibility.score}
+              brand={result.brand}
+            />
+
+            <PromptsTable results={result.promptResults} target={result.brand.name} />
+
+            <BrandsMentionedCard
+              marketShare={result.aggregate.marketShare}
+              target={result.brand.name}
+            />
+
+          </>
+        )}
+      </main>
+    </div>
   );
 }
